@@ -13,15 +13,16 @@ def clean_tenant_name(tenant_name):
     """Очищает имя tenant от квадратных скобок и лишних пробелов"""
     if pd.isna(tenant_name):
         return None
-    if not isinstance(tenant_name, str):
-        tenant_name = str(tenant_name)
-    return re.sub(r'\[.*?\]', '', tenant_name).strip()
+    tenant_name = str(tenant_name)
+    tenant_name = re.sub(r'\[.*?\]', '', tenant_name)
+    tenant_name = ' '.join(tenant_name.split())
+    return tenant_name.strip()
 
 def add_back_to_navigation_link(ws):
     """Добавляет ссылку для возврата к навигационному листу"""
-    ws.cell(row=1, column=1, value="← Назад к навигации").hyperlink = Hyperlink(
-        ref="A1", location="'НАВИГАЦИЯ'!A1")
-    ws.cell(row=1, column=1).font = Font(color="0563C1", underline="single", bold=True)
+    back_cell = ws.cell(row=1, column=1, value="← Назад к навигации")
+    back_cell.hyperlink = Hyperlink(ref="A1", location="'НАВИГАЦИЯ'!A1")
+    back_cell.font = Font(color="0563C1", underline="single", bold=True)
     ws.row_dimensions[1].height = 20
 
 def create_navigation_sheet(wb, tenants):
@@ -53,38 +54,38 @@ def create_navigation_sheet(wb, tenants):
                 cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{sheet_name}'!A1")
                 cell.font = Font(color="0563C1", underline="single")
     
-    # Оптимизированное форматирование
-    for col in ws_nav.columns:
-        max_len = max((len(str(cell.value)) if cell.value else 0 for cell in col), default=0)
-        if max_len > 0:
-            ws_nav.column_dimensions[col[0].column_letter].width = (max_len + 2) * 1.2
+    # Форматирование
+    for column in ws_nav.columns:
+        max_length = max(len(str(cell.value)) for cell in column if cell.value) + 2 if any(cell.value for cell in column) else 0
+        if max_length > 0:
+            column_letter = column[0].column_letter
+            ws_nav.column_dimensions[column_letter].width = max_length * 1.2
     
     # Чередующаяся заливка строк
     for row in range(3, len(tenants) + 3):
         if row % 2 == 1:
             for col in range(1, 5):
                 ws_nav.cell(row=row, column=col).fill = PatternFill(
-                    start_color="EFEFEF", end_color="EFEFEF", fill_type="solid")
+                    start_color="EFEFEF", end_color="EFEFEF", fill_type="solid"
+                )
 
 def parse_os_data(os_value):
-    """Оптимизированный парсинг данных ОС"""
-    if pd.isna(os_value) or not os_value:
+    """Функция для парсинга данных ОС"""
+    if pd.isna(os_value) or os_value == '':
         return None, None
     
     if isinstance(os_value, str):
-        if 'name' not in os_value.lower() and 'version' not in os_value.lower():
+        if not any(x in os_value.lower() for x in ['name', 'version']):
             parts = os_value.rsplit(' ', 1)
             return (parts[0], parts[1]) if len(parts) > 1 else (os_value, None)
         
         try:
-            os_dict = json.loads(os_value) if os_value.startswith(('{', '[')) else ast.literal_eval(os_value)
-            if isinstance(os_dict, dict):
-                return (
-                    str(os_dict.get('name', '')).strip() or None,
-                    str(os_dict.get('version', '')).strip() or None
-                )
-        except:
-            return str(os_value), None
+            os_value = json.loads(os_value)
+        except json.JSONDecodeError:
+            try:
+                os_value = ast.literal_eval(os_value)
+            except:
+                return str(os_value), None
     
     if isinstance(os_value, dict):
         return (
@@ -93,30 +94,55 @@ def parse_os_data(os_value):
         )
     return str(os_value), None
 
-def parse_json_data(value, fields):
-    """Универсальная функция для парсинга JSON данных"""
-    if pd.isna(value) or not value:
+def parse_software_data(software_value):
+    """Функция для парсинга данных о ПО"""
+    if pd.isna(software_value) or software_value == '':
         return []
     
-    try:
-        if isinstance(value, str):
+    if isinstance(software_value, str):
+        try:
+            software_value = json.loads(software_value)
+        except json.JSONDecodeError:
             try:
-                data = json.loads(value)
-            except json.JSONDecodeError:
-                try:
-                    data = ast.literal_eval(value)
-                except:
-                    return []
-        else:
-            data = value
-        
-        if isinstance(data, list):
-            return [
-                {field: str(item.get(field, '')).strip() or None for field in fields}
-                for item in data if isinstance(item, dict)
-            ]
-    except:
+                software_value = ast.literal_eval(software_value)
+            except:
+                return []
+    
+    if isinstance(software_value, list):
+        return [{
+            'name': str(item.get('name', '')).strip() or None,
+            'version': str(item.get('version', '')).strip() or None,
+            'vendor': str(item.get('vendor', '')).strip() or None
+        } for item in software_value if isinstance(item, dict)]
+    return []
+
+def parse_vulnerabilities_data(vuln_value):
+    """Функция для парсинга данных об уязвимостях"""
+    if pd.isna(vuln_value) or vuln_value == '':
         return []
+    
+    if isinstance(vuln_value, str):
+        try:
+            vuln_value = json.loads(vuln_value)
+        except json.JSONDecodeError:
+            try:
+                vuln_value = ast.literal_eval(vuln_value)
+            except:
+                return []
+    
+    if isinstance(vuln_value, list):
+        return [{
+            'kasperskyID': str(item.get('kasperskyID', '')).strip() or None,
+            'productName': str(item.get('productName', '')).strip() or None,
+            'descriptionURL': str(item.get('descriptionURL', '')).strip() or None,
+            'recommendedMajorPatch': str(item.get('recommendedMajorPatch', '')).strip() or None,
+            'recommendedMinorPatch': str(item.get('recommendedMinorPatch', '')).strip() or None,
+            'severityStr': str(item.get('severityStr', '')).strip() or None,
+            'severity': str(item.get('severity', '')).strip() or None,
+            'cve': str(item.get('cve', '')).strip() or None,
+            'exploitExists': str(item.get('exploitExists', '')).strip() or None,
+            'malwareExists': str(item.get('malwareExists', '')).strip() or None
+        } for item in vuln_value if isinstance(item, dict)]
     return []
 
 def create_tenant_sheets(wb, merged_data, tenant_name):
@@ -143,35 +169,40 @@ def create_tenant_sheets(wb, merged_data, tenant_name):
         if 'software' in tenant_data.columns:
             software_rows = []
             for _, row in tenant_data[['fqdn', 'software']].iterrows():
-                for item in parse_json_data(row['software'], ['name', 'version', 'vendor']):
+                items = parse_software_data(row['software'])
+                for item in items or [{}]:
                     software_rows.append({
                         'fqdn': row['fqdn'],
                         **item
                     })
             
-            if software_rows:
+            software_data = pd.DataFrame(software_rows)
+            if not software_data.empty:
                 ws_software = wb.create_sheet(f"{prefix}_SOFTWARE")
                 add_back_to_navigation_link(ws_software)
-                create_merged_sheet(ws_software, pd.DataFrame(software_rows), 
-                                  ['fqdn'], ['name', 'version', 'vendor'])
+                create_merged_sheet(ws_software, software_data, ['fqdn'], ['name', 'version', 'vendor'])
         
         # Лист VULNERABILITIES
         if 'vulnerabilities' in tenant_data.columns:
-            vuln_fields = ['kasperskyID', 'productName', 'descriptionURL', 'recommendedMajorPatch',
-                         'recommendedMinorPatch', 'severityStr', 'severity', 'cve', 'exploitExists', 'malwareExists']
             vuln_rows = []
             for _, row in tenant_data[['fqdn', 'vulnerabilities']].iterrows():
-                for item in parse_json_data(row['vulnerabilities'], vuln_fields):
+                items = parse_vulnerabilities_data(row['vulnerabilities'])
+                for item in items or [{}]:
                     vuln_rows.append({
                         'fqdn': row['fqdn'],
                         **item
                     })
             
-            if vuln_rows:
+            vuln_data = pd.DataFrame(vuln_rows)
+            if not vuln_data.empty:
                 ws_vuln = wb.create_sheet(f"{prefix}_VULNERABILITIES")
                 add_back_to_navigation_link(ws_vuln)
-                create_merged_sheet(ws_vuln, pd.DataFrame(vuln_rows), 
-                                   ['fqdn'], vuln_fields)
+                vuln_columns = [
+                    'kasperskyID', 'productName', 'descriptionURL',
+                    'recommendedMajorPatch', 'recommendedMinorPatch', 'severityStr',
+                    'severity', 'cve', 'exploitExists', 'malwareExists'
+                ]
+                create_merged_sheet(ws_vuln, vuln_data, ['fqdn'], vuln_columns)
     
     except Exception as e:
         print(f"Ошибка создания листов для tenant {tenant_name}: {e}\n{traceback.format_exc()}")
@@ -179,24 +210,32 @@ def create_tenant_sheets(wb, merged_data, tenant_name):
 def create_merged_sheet(ws, df, id_columns, data_columns):
     """Создает лист с объединенными ячейками для группированных данных"""
     try:
+        # Пропускаем первую строку (там ссылка на навигацию)
+        start_row = 2
+        
         # Заголовки
-        ws.append(id_columns + data_columns)
+        for col, header in enumerate(id_columns + data_columns, 1):
+            ws.cell(row=start_row, column=col, value=header).font = Font(bold=True)
         
         if df.empty:
             return
         
         # Группировка и запись данных
-        current_row = 2
-        for _, group in df.groupby(id_columns):
+        grouped = df.groupby(id_columns)
+        current_row = start_row + 1
+        
+        for group_key, group in grouped:
             # Первая строка группы
             first_row = group.iloc[0]
-            ws.append([first_row[col] for col in id_columns] + 
-                     [first_row[col] for col in data_columns])
+            row_data = [first_row.get(col) for col in id_columns] + \
+                      [first_row.get(col) for col in data_columns]
+            ws.append(row_data)
             
             # Остальные строки группы
             for i in range(1, len(group)):
-                ws.append([None]*len(id_columns) + 
-                         [group.iloc[i][col] for col in data_columns])
+                row_data = [None]*len(id_columns) + \
+                          [group.iloc[i].get(col) for col in data_columns]
+                ws.append(row_data)
             
             # Объединение ячеек
             if len(group) > 1:
@@ -211,7 +250,7 @@ def create_merged_sheet(ws, df, id_columns, data_columns):
             current_row += len(group)
         
         # Центрирование объединенных ячеек
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(id_columns)):
+        for row in ws.iter_rows(min_row=start_row, max_row=ws.max_row, min_col=1, max_col=len(id_columns)):
             for cell in row:
                 cell.alignment = Alignment(vertical='center', horizontal='center')
     
@@ -220,33 +259,26 @@ def create_merged_sheet(ws, df, id_columns, data_columns):
 
 def process_data(all_data_file, devices_report_file, output_file):
     try:
-        print("Оптимизированная загрузка данных...")
-        # Указываем только нужные столбцы и их типы для экономии памяти
-        dtype = {
-            'tenantName': 'category',
-            'fqdn': 'category',
-            'os': 'object',
-            'software': 'object',
-            'vulnerabilities': 'object'
-        }
-        all_data = pd.read_excel(all_data_file, dtype=dtype)
-        devices_report = pd.read_excel(devices_report_file, 
-                                     usecols=['fqdn', 'Network Cards', 'CPU', 'RAM', 'Disk Space'],
-                                     dtype={'fqdn': 'category'})
+        print("Загрузка данных...")
+        all_data = pd.read_excel(all_data_file)
+        devices_report = pd.read_excel(devices_report_file)
+        
+        required_columns = ['fqdn', 'Network Cards', 'CPU', 'RAM', 'Disk Space']
+        missing_columns = [col for col in required_columns if col not in devices_report.columns]
+        if missing_columns:
+            raise Exception(f"Отсутствуют столбцы: {', '.join(missing_columns)}")
         
         print("Объединение данных...")
         merged_data = pd.merge(
             all_data,
-            devices_report,
+            devices_report[required_columns],
             on='fqdn',
             how='left'
         )
         
-        # Очистка tenantName
         if 'tenantName' in merged_data.columns:
             merged_data['tenantName'] = merged_data['tenantName'].apply(clean_tenant_name)
         
-        # Парсинг OS
         if 'os' in merged_data.columns:
             print("Парсинг данных OS...")
             merged_data[['os_parsed', 'os_version']] = pd.DataFrame(
@@ -255,7 +287,7 @@ def process_data(all_data_file, devices_report_file, output_file):
             )
         
         if 'tenantName' not in merged_data.columns:
-            raise Exception("Отсутствует столбец tenantName в исходных данных")
+            raise Exception("Отсутствует столбец tenantName")
         
         print("Создание Excel файла...")
         wb = Workbook()
@@ -291,7 +323,7 @@ if __name__ == "__main__":
         if missing_files:
             raise Exception(f"Отсутствуют файлы: {', '.join(missing_files)}")
         
-        output_file = 'tenant_report_final.xlsx'
+        output_file = 'tenant_report_with_navigation.xlsx'
         
         print("Начало обработки данных...")
         process_data(input_files['all_data_combined'], 
